@@ -57,6 +57,64 @@
         }
         button:hover { background: #00a089; }
         button:disabled { background: #aaa; cursor: not-allowed; }
+
+        /* ---- การ์ดสรุป (แสดง “X ที่ Y ชิ้น”) ---- */
+        .cards-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px;
+            padding: 15px;
+            background: #f8f9fa;
+        }
+        .card {
+            background: white;
+            border-radius: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            padding: 12px;
+            text-align: center;
+            min-width: 130px;   /* กว้างขึ้นนิดเพื่อให้พอดี */
+            max-width: 150px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+        }
+        .card:hover {
+            transform: translateY(-6px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+        .card.selected {
+            transform: translateY(-10px);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.3);
+            border: 3px solid #00c2a8;
+        }
+        .card h3 {
+            margin: 0 0 4px;
+            font-size: 13px;
+            color: white;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .card p {
+            margin: 0;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            line-height: 1.2;
+        }
+        .card .pieces {
+            font-size: 14px;
+            font-weight: normal;
+        }
+        .card.total {
+            background: linear-gradient(135deg, #00c2a8, #009f87);
+        }
+        .card.other-warehouse {
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+            cursor: default;
+        }
+
         .table-wrapper { overflow-x: auto; }
         table {
             width: 100%;
@@ -115,6 +173,10 @@
             <button onclick="resetFilter()">🔄 แสดงทั้งหมด</button>
             <button onclick="exportToExcel()">📥 Export Excel</button>
         </div>
+
+        <!-- การ์ดสรุป (แสดง X ที่ Y ชิ้น) -->
+        <div class="cards-container" id="cardsContainer"></div>
+
         <div id="loading" class="loading">กำลังโหลดข้อมูลจาก Google Sheets...</div>
         <div class="table-wrapper" style="display:none;" id="tableWrapper">
             <table id="dataTable">
@@ -144,20 +206,33 @@
             <button id="nextBtn" onclick="nextPage()">ถัดไป »</button>
         </div>
     </div>
-
     <script>
         let allData = [];
+        let dateFilteredData = [];
+        let sparepartData = [];     
         let filteredData = [];
         let uniqueDates = [];
         let currentPage = 1;
+        let currentSendBY = ''; 
         const itemsPerPage = 15;
+
+        // รองรับตัวพิมพ์หลายแบบของคลัง Sparepart
+        const sparepartVariants = [
+            'คลังสินค้า Sparepart',
+            'คลังสินค้า SparePart',
+            'คลังสินค้า sparepart',
+            'คลังสินค้า SPAREPART',
+            'คลังสินค้า sparePart'
+        ];
+
+        // สีสดใสสไตล์ Canva
+        const cardColors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#6c5ce7', '#a29bfe', '#fd79a8', '#1dd1a1', '#ff9ff3', '#54a0ff'];
 
         async function loadData() {
             try {
                 const resp = await fetch('https://opensheet.elk.sh/1oBdK8GCNZzJWUa4-_4L7MgTpvnLX7bfaVrMKyDTfHKA/ExpressExport');
                 allData = await resp.json();
-               
-                // ดึง unique วันที่ส่ง
+              
                 const dateSet = new Set();
                 allData.forEach(row => {
                     const d = (row.DateSucess || '').trim();
@@ -169,14 +244,12 @@
                         const parts = str.split('/');
                         if (parts.length !== 3) return new Date(str);
                         let [day, month, year] = parts.map(p => parseInt(p, 10));
-                        if (year > 2500) year -= 543; // แปลง พ.ศ. → ค.ศ.
+                        if (year > 2500) year -= 543;
                         return new Date(year, month - 1, day);
                     };
-                    return parseDate(b) - parseDate(a); // ล่าสุดก่อน
+                    return parseDate(b) - parseDate(a);
                 });
-
                 populateSelect();
-                // Default = วันที่ล่าสุด
                 if (uniqueDates.length > 0) {
                     document.getElementById('filterDate').value = uniqueDates[0];
                 }
@@ -199,15 +272,41 @@
 
         function applyFilter() {
             const val = document.getElementById('filterDate').value;
-            filteredData = val ? allData.filter(row => (row.DateSucess || '').trim() === val) : allData;
+
+            dateFilteredData = val ? allData.filter(row => (row.DateSucess || '').trim() === val) : allData.slice();
+
+            sparepartData = dateFilteredData.filter(row => {
+                const sender = (row.Sender || '').trim();
+                return sparepartVariants.includes(sender);
+            });
+
+            filteredData = currentSendBY 
+                ? sparepartData.filter(row => (row.SendBY || '').trim() === currentSendBY)
+                : sparepartData.slice();
+
             currentPage = 1;
+            updateView();
+        }
+
+        function updateView() {
             renderTable();
             renderPagination();
+            renderCards();
         }
 
         function resetFilter() {
             document.getElementById('filterDate').value = '';
+            currentSendBY = '';
             applyFilter();
+        }
+
+        function selectSendBY(sendBy) {
+            currentSendBY = sendBy;
+            currentPage = 1;
+            filteredData = currentSendBY 
+                ? sparepartData.filter(row => (row.SendBY || '').trim() === currentSendBY)
+                : sparepartData.slice();
+            updateView();
         }
 
         function getDisplayedData() {
@@ -252,12 +351,96 @@
         }
 
         function prevPage() {
-            if (currentPage > 1) { currentPage--; renderTable(); renderPagination(); }
+            if (currentPage > 1) { currentPage--; updateView(); }
         }
-
         function nextPage() {
             if (currentPage < Math.ceil(filteredData.length / itemsPerPage)) {
-                currentPage++; renderTable(); renderPagination();
+                currentPage++; updateView();
+            }
+        }
+
+        // ---- การ์ดสรุป (แสดง “X ที่ Y ชิ้น”) ----
+        function renderCards() {
+            const container = document.getElementById('cardsContainer');
+            container.innerHTML = '';
+
+            if (dateFilteredData.length === 0) {
+                container.innerHTML = '<p style="width:100%; text-align:center; color:#666; font-size:16px;">ไม่มีข้อมูลสำหรับวันที่เลือก</p>';
+                return;
+            }
+
+            // --- SendBY (เฉพาะคลัง Sparepart) ---
+            const summary = {};
+            sparepartData.forEach(row => {
+                const sendBy = (row.SendBY || 'ไม่ระบุ').trim();
+                const idCar = (row.IDCar || '').trim();
+                const qty = parseInt(row.Qty || '0', 10) || 0;
+                if (!summary[sendBy]) {
+                    summary[sendBy] = { places: new Set(), pieces: 0 };
+                }
+                if (idCar) summary[sendBy].places.add(idCar);
+                summary[sendBy].pieces += qty;
+            });
+
+            const summaryArray = Object.keys(summary).map(key => ({
+                sendBy: key,
+                places: summary[key].places.size,
+                pieces: summary[key].pieces
+            })).sort((a, b) => b.places - a.places);
+
+            summaryArray.forEach((item, i) => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.style.background = cardColors[i % cardColors.length];
+                card.onclick = () => selectSendBY(item.sendBy);
+                if (currentSendBY === item.sendBy) card.classList.add('selected');
+                card.innerHTML = `
+                    <h3>${escapeHtml(item.sendBy)}</h3>
+                    <p>${item.places}<br><span class="pieces">ที่ ${item.pieces} ชิ้น</span></p>
+                `;
+                container.appendChild(card);
+            });
+
+            // --- รับที่คลังอื่น ---
+            const other = { places: new Set(), pieces: 0 };
+            dateFilteredData.forEach(row => {
+                const sender = (row.Sender || '').trim();
+                const idCar = (row.IDCar || '').trim();
+                const qty = parseInt(row.Qty || '0', 10) || 0;
+                if (!sparepartVariants.includes(sender)) {
+                    if (idCar) other.places.add(idCar);
+                    other.pieces += qty;
+                }
+            });
+
+            const otherCard = document.createElement('div');
+            otherCard.className = 'card other-warehouse';
+            otherCard.innerHTML = `
+                <h3>รับที่คลังอื่น</h3>
+                <p>${other.places.size}<br><span class="pieces">ที่ ${other.pieces} ชิ้น</span></p>
+            `;
+            container.appendChild(otherCard);
+
+            // --- รวมทั้งหมด (คลัง Sparepart) ---
+            const totalPlaces = new Set();
+            let totalPieces = 0;
+            sparepartData.forEach(row => {
+                const idCar = (row.IDCar || '').trim();
+                const qty = parseInt(row.Qty || '0', 10) || 0;
+                if (idCar) totalPlaces.add(idCar);
+                totalPieces += qty;
+            });
+
+            if (totalPlaces.size > 0) {
+                const totalCard = document.createElement('div');
+                totalCard.className = 'card total';
+                totalCard.onclick = () => selectSendBY('');
+                if (currentSendBY === '') totalCard.classList.add('selected');
+                totalCard.innerHTML = `
+                    <h3>รวม (คลัง Sparepart)</h3>
+                    <p>${totalPlaces.size}<br><span class="pieces">ที่ ${totalPieces} ชิ้น</span></p>
+                `;
+                container.appendChild(totalCard);
             }
         }
 
@@ -266,7 +449,9 @@
                 alert('ไม่มีข้อมูลให้ export');
                 return;
             }
-            // Map ชื่อคอลัมน์เป็นภาษาไทยสำหรับ Excel
+            const dateVal = document.getElementById('filterDate').value || 'ทั้งหมด';
+            const sendByVal = currentSendBY || 'ทุกผู้ส่ง';
+
             const exportData = filteredData.map(row => ({
                 "วันที่ขอเบิก": row.Datework || '',
                 "วันที่ส่ง": row.DateSucess || '',
@@ -282,11 +467,10 @@
                 "สถานที่จัดส่ง": row.Station || '',
                 "ประเภท": row.Status || ''
             }));
-
             const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "ExpressExport");
-            const fileName = `ExpressExport_${document.getElementById('filterDate').value || 'ทั้งหมด'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+            const fileName = `ExpressExport_${dateVal}_${sendByVal}_Sparepart_${new Date().toISOString().slice(0,10)}.xlsx`;
             XLSX.writeFile(wb, fileName);
         }
 
@@ -296,7 +480,6 @@
             return div.innerHTML;
         }
 
-        // โหลดข้อมูลทันที
         loadData();
     </script>
 </body>
