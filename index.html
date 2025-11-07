@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Express Export Dashboard (สไตล์ Canva)</title>
+    <!-- SheetJS สำหรับ Export Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        /* สไตล์แบบ Canva: สะอาด กระทัดรัด สีสดใส */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0; padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        header {
+            background: #00c2a8;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 { margin: 0; font-size: 24px; }
+        .controls {
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        select, button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+        }
+        select {
+            border: 2px solid #ddd;
+            background: white;
+            min-width: 220px;
+        }
+        button {
+            background: #00c2a8;
+            color: white;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        button:hover { background: #00a089; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
+        .table-wrapper { overflow-x: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th {
+            background: #00c2a8;
+            color: white;
+            padding: 12px 8px;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+        }
+        td {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+        tr:hover { background: #f0f8f7; }
+        tbody tr:nth-child(even) { background: #f9fdfc; }
+        .loading { text-align: center; padding: 40px; font-size: 18px; color: #666; }
+        .pagination {
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .pagination button {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+        .page-info {
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📦 Express Export Dashboard</h1>
+        </header>
+        <div class="controls">
+            <label>กรองตามวันที่ส่ง:</label>
+            <select id="filterDate" onchange="applyFilter()">
+                <option value="">กำลังโหลดวันที่...</option>
+            </select>
+            <button onclick="resetFilter()">🔄 แสดงทั้งหมด</button>
+            <button onclick="exportToExcel()">📥 Export Excel</button>
+        </div>
+        <div id="loading" class="loading">กำลังโหลดข้อมูลจาก Google Sheets...</div>
+        <div class="table-wrapper" style="display:none;" id="tableWrapper">
+            <table id="dataTable">
+                <thead>
+                    <tr>
+                        <th>วันที่ขอเบิก</th>
+                        <th>วันที่ส่ง</th>
+                        <th>ใบจองรถ</th>
+                        <th>รายการ</th>
+                        <th>จำนวน</th>
+                        <th>รูปแบบส่ง</th>
+                        <th>เขต/อำเภอ</th>
+                        <th>จังหวัด</th>
+                        <th>ส่งโดย</th>
+                        <th>คลังผู้เบิก</th>
+                        <th>คลังผู้จ่าย</th>
+                        <th>สถานที่จัดส่ง</th>
+                        <th>ประเภท</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="pagination" id="pagination" style="display:none;">
+            <button id="prevBtn" onclick="prevPage()">« ก่อนหน้า</button>
+            <span class="page-info" id="pageInfo"></span>
+            <button id="nextBtn" onclick="nextPage()">ถัดไป »</button>
+        </div>
+    </div>
+
+    <script>
+        let allData = [];
+        let filteredData = [];
+        let uniqueDates = [];
+        let currentPage = 1;
+        const itemsPerPage = 15;
+
+        async function loadData() {
+            try {
+                const resp = await fetch('https://opensheet.elk.sh/1oBdK8GCNZzJWUa4-_4L7MgTpvnLX7bfaVrMKyDTfHKA/ExpressExport');
+                allData = await resp.json();
+               
+                // ดึง unique วันที่ส่ง
+                const dateSet = new Set();
+                allData.forEach(row => {
+                    const d = (row.DateSucess || '').trim();
+                    if (d) dateSet.add(d);
+                });
+                uniqueDates = Array.from(dateSet);
+                uniqueDates.sort((a, b) => {
+                    const parseDate = (str) => {
+                        const parts = str.split('/');
+                        if (parts.length !== 3) return new Date(str);
+                        let [day, month, year] = parts.map(p => parseInt(p, 10));
+                        if (year > 2500) year -= 543; // แปลง พ.ศ. → ค.ศ.
+                        return new Date(year, month - 1, day);
+                    };
+                    return parseDate(b) - parseDate(a); // ล่าสุดก่อน
+                });
+
+                populateSelect();
+                // Default = วันที่ล่าสุด
+                if (uniqueDates.length > 0) {
+                    document.getElementById('filterDate').value = uniqueDates[0];
+                }
+                applyFilter();
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('tableWrapper').style.display = 'block';
+                document.getElementById('pagination').style.display = 'flex';
+            } catch (e) {
+                document.getElementById('loading').innerHTML = '❌ โหลดข้อมูลไม่สำเร็จ<br>ตรวจสอบว่า Sheet แชร์เป็น "Anyone with the link"';
+            }
+        }
+
+        function populateSelect() {
+            const select = document.getElementById('filterDate');
+            select.innerHTML = '<option value="">📅 แสดงทั้งหมด</option>';
+            uniqueDates.forEach(date => {
+                select.innerHTML += `<option value="${date}">${date}</option>`;
+            });
+        }
+
+        function applyFilter() {
+            const val = document.getElementById('filterDate').value;
+            filteredData = val ? allData.filter(row => (row.DateSucess || '').trim() === val) : allData;
+            currentPage = 1;
+            renderTable();
+            renderPagination();
+        }
+
+        function resetFilter() {
+            document.getElementById('filterDate').value = '';
+            applyFilter();
+        }
+
+        function getDisplayedData() {
+            const start = (currentPage - 1) * itemsPerPage;
+            return filteredData.slice(start, start + itemsPerPage);
+        }
+
+        function renderTable() {
+            const tbody = document.querySelector('#dataTable tbody');
+            tbody.innerHTML = '';
+            getDisplayedData().forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${escapeHtml(row.Datework || '')}</td>
+                    <td>${escapeHtml(row.DateSucess || '')}</td>
+                    <td>${escapeHtml(row.IDCar || '')}</td>
+                    <td>${escapeHtml(row.Detail || '')}</td>
+                    <td>${escapeHtml(row.Qty || '')}</td>
+                    <td>${escapeHtml(row.SendSelect || '')}</td>
+                    <td>${escapeHtml(row.Direct || '')}</td>
+                    <td>${escapeHtml(row.Province || '')}</td>
+                    <td>${escapeHtml(row.SendBY || '')}</td>
+                    <td>${escapeHtml(row.Plant || '')}</td>
+                    <td>${escapeHtml(row.Sender || '')}</td>
+                    <td>${escapeHtml(row.Station || '')}</td>
+                    <td>${escapeHtml(row.Status || '')}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderPagination() {
+            const totalItems = filteredData.length;
+            const totalPages = Math.ceil(totalItems / itemsPerPage);
+            const start = (currentPage - 1) * itemsPerPage + 1;
+            const end = Math.min(currentPage * itemsPerPage, totalItems);
+            document.getElementById('pageInfo').innerText =
+                totalItems === 0 ? 'ไม่มีข้อมูล' :
+                `แสดง ${start}-${end} จาก ${totalItems} รายการ (หน้า ${currentPage}/${totalPages})`;
+            document.getElementById('prevBtn').disabled = currentPage === 1;
+            document.getElementById('nextBtn').disabled = currentPage === totalPages || totalPages === 0;
+        }
+
+        function prevPage() {
+            if (currentPage > 1) { currentPage--; renderTable(); renderPagination(); }
+        }
+
+        function nextPage() {
+            if (currentPage < Math.ceil(filteredData.length / itemsPerPage)) {
+                currentPage++; renderTable(); renderPagination();
+            }
+        }
+
+        function exportToExcel() {
+            if (filteredData.length === 0) {
+                alert('ไม่มีข้อมูลให้ export');
+                return;
+            }
+            // Map ชื่อคอลัมน์เป็นภาษาไทยสำหรับ Excel
+            const exportData = filteredData.map(row => ({
+                "วันที่ขอเบิก": row.Datework || '',
+                "วันที่ส่ง": row.DateSucess || '',
+                "ใบจองรถ": row.IDCar || '',
+                "รายการ": row.Detail || '',
+                "จำนวน": row.Qty || '',
+                "รูปแบบส่ง": row.SendSelect || '',
+                "เขต/อำเภอ": row.Direct || '',
+                "จังหวัด": row.Province || '',
+                "ส่งโดย": row.SendBY || '',
+                "คลังผู้เบิก": row.Plant || '',
+                "คลังผู้จ่าย": row.Sender || '',
+                "สถานที่จัดส่ง": row.Station || '',
+                "ประเภท": row.Status || ''
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "ExpressExport");
+            const fileName = `ExpressExport_${document.getElementById('filterDate').value || 'ทั้งหมด'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+            XLSX.writeFile(wb, fileName);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // โหลดข้อมูลทันที
+        loadData();
+    </script>
+</body>
+</html>
