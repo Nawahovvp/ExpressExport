@@ -73,7 +73,7 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
             padding: 12px;
             text-align: center;
-            min-width: 130px;   /* กว้างขึ้นนิดเพื่อให้พอดี */
+            min-width: 130px;
             max-width: 150px;
             transition: all 0.3s ease;
             cursor: pointer;
@@ -112,7 +112,6 @@
         }
         .card.other-warehouse {
             background: linear-gradient(135deg, #f093fb, #f5576c);
-            cursor: default;
         }
 
         .table-wrapper { overflow-x: auto; }
@@ -209,11 +208,13 @@
     <script>
         let allData = [];
         let dateFilteredData = [];
-        let sparepartData = [];     
+        let sparepartData = [];
+        let otherData = [];
         let filteredData = [];
         let uniqueDates = [];
         let currentPage = 1;
         let currentSendBY = ''; 
+        const OTHER_FLAG = '@@OTHER@@';
         const itemsPerPage = 15;
 
         // รองรับตัวพิมพ์หลายแบบของคลัง Sparepart
@@ -227,6 +228,10 @@
 
         // สีสดใสสไตล์ Canva
         const cardColors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#6c5ce7', '#a29bfe', '#fd79a8', '#1dd1a1', '#ff9ff3', '#54a0ff'];
+
+        // สรุปตัวเลขสำหรับ Sparepart (ทั้งหมด) และ คลังอื่น
+        let sparepartTotal = { places: 0, pieces: 0 };
+        let otherSummary = { places: 0, pieces: 0 };
 
         async function loadData() {
             try {
@@ -275,17 +280,53 @@
 
             dateFilteredData = val ? allData.filter(row => (row.DateSucess || '').trim() === val) : allData.slice();
 
+            // แยกข้อมูล Sparepart
             sparepartData = dateFilteredData.filter(row => {
                 const sender = (row.Sender || '').trim();
                 return sparepartVariants.includes(sender);
             });
 
-            filteredData = currentSendBY 
-                ? sparepartData.filter(row => (row.SendBY || '').trim() === currentSendBY)
-                : sparepartData.slice();
+            // ข้อมูลคลังอื่น
+            otherData = dateFilteredData.filter(row => {
+                const sender = (row.Sender || '').trim();
+                return !sparepartVariants.includes(sender);
+            });
 
+            // สรุปตัวเลข Sparepart ทั้งหมด
+            const totalSet = new Set();
+            sparepartTotal.pieces = 0;
+            sparepartData.forEach(row => {
+                const idCar = (row.IDCar || '').trim();
+                if (idCar) totalSet.add(idCar);
+                const qty = parseInt(row.Qty || '0', 10) || 0;
+                sparepartTotal.pieces += qty;
+            });
+            sparepartTotal.places = totalSet.size;
+
+            // สรุปตัวเลขคลังอื่น
+            const otherSet = new Set();
+            otherSummary.pieces = 0;
+            otherData.forEach(row => {
+                const idCar = (row.IDCar || '').trim();
+                if (idCar) otherSet.add(idCar);
+                const qty = parseInt(row.Qty || '0', 10) || 0;
+                otherSummary.pieces += qty;
+            });
+            otherSummary.places = otherSet.size;
+
+            calculateFilteredData();
             currentPage = 1;
             updateView();
+        }
+
+        function calculateFilteredData() {
+            if (currentSendBY === OTHER_FLAG) {
+                filteredData = otherData.slice();
+            } else if (currentSendBY) {
+                filteredData = sparepartData.filter(row => (row.SendBY || '').trim() === currentSendBY);
+            } else {
+                filteredData = sparepartData.slice();
+            }
         }
 
         function updateView() {
@@ -300,12 +341,10 @@
             applyFilter();
         }
 
-        function selectSendBY(sendBy) {
-            currentSendBY = sendBy;
+        function selectFilter(filter) {
+            currentSendBY = filter;
+            calculateFilteredData();
             currentPage = 1;
-            filteredData = currentSendBY 
-                ? sparepartData.filter(row => (row.SendBY || '').trim() === currentSendBY)
-                : sparepartData.slice();
             updateView();
         }
 
@@ -369,7 +408,7 @@
                 return;
             }
 
-            // --- SendBY (เฉพาะคลัง Sparepart) ---
+            // --- การ์ดแยกตาม SendBY (เฉพาะ Sparepart) ---
             const summary = {};
             sparepartData.forEach(row => {
                 const sendBy = (row.SendBY || 'ไม่ระบุ').trim();
@@ -392,7 +431,7 @@
                 const card = document.createElement('div');
                 card.className = 'card';
                 card.style.background = cardColors[i % cardColors.length];
-                card.onclick = () => selectSendBY(item.sendBy);
+                card.onclick = () => selectFilter(item.sendBy);
                 if (currentSendBY === item.sendBy) card.classList.add('selected');
                 card.innerHTML = `
                     <h3>${escapeHtml(item.sendBy)}</h3>
@@ -401,44 +440,26 @@
                 container.appendChild(card);
             });
 
-            // --- รับที่คลังอื่น ---
-            const other = { places: new Set(), pieces: 0 };
-            dateFilteredData.forEach(row => {
-                const sender = (row.Sender || '').trim();
-                const idCar = (row.IDCar || '').trim();
-                const qty = parseInt(row.Qty || '0', 10) || 0;
-                if (!sparepartVariants.includes(sender)) {
-                    if (idCar) other.places.add(idCar);
-                    other.pieces += qty;
-                }
-            });
-
+            // --- การ์ด “รับที่คลังอื่น” (คลิกได้!) ---
             const otherCard = document.createElement('div');
             otherCard.className = 'card other-warehouse';
+            otherCard.onclick = () => selectFilter(OTHER_FLAG);
+            if (currentSendBY === OTHER_FLAG) otherCard.classList.add('selected');
             otherCard.innerHTML = `
                 <h3>รับที่คลังอื่น</h3>
-                <p>${other.places.size}<br><span class="pieces">ที่ ${other.pieces} ชิ้น</span></p>
+                <p>${otherSummary.places}<br><span class="pieces">ที่ ${otherSummary.pieces} ชิ้น</span></p>
             `;
             container.appendChild(otherCard);
 
-            // --- รวมทั้งหมด (คลัง Sparepart) ---
-            const totalPlaces = new Set();
-            let totalPieces = 0;
-            sparepartData.forEach(row => {
-                const idCar = (row.IDCar || '').trim();
-                const qty = parseInt(row.Qty || '0', 10) || 0;
-                if (idCar) totalPlaces.add(idCar);
-                totalPieces += qty;
-            });
-
-            if (totalPlaces.size > 0) {
+            // --- การ์ดรวม Sparepart ---
+            if (sparepartTotal.places > 0) {
                 const totalCard = document.createElement('div');
                 totalCard.className = 'card total';
-                totalCard.onclick = () => selectSendBY('');
+                totalCard.onclick = () => selectFilter('');
                 if (currentSendBY === '') totalCard.classList.add('selected');
                 totalCard.innerHTML = `
                     <h3>รวม (คลัง Sparepart)</h3>
-                    <p>${totalPlaces.size}<br><span class="pieces">ที่ ${totalPieces} ชิ้น</span></p>
+                    <p>${sparepartTotal.places}<br><span class="pieces">ที่ ${sparepartTotal.pieces} ชิ้น</span></p>
                 `;
                 container.appendChild(totalCard);
             }
@@ -450,7 +471,14 @@
                 return;
             }
             const dateVal = document.getElementById('filterDate').value || 'ทั้งหมด';
-            const sendByVal = currentSendBY || 'ทุกผู้ส่ง';
+            let sendByVal = '';
+            if (currentSendBY === OTHER_FLAG) {
+                sendByVal = 'คลังอื่น';
+            } else if (currentSendBY) {
+                sendByVal = currentSendBY;
+            } else {
+                sendByVal = 'ทุกผู้ส่ง';
+            }
 
             const exportData = filteredData.map(row => ({
                 "วันที่ขอเบิก": row.Datework || '',
@@ -470,7 +498,7 @@
             const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "ExpressExport");
-            const fileName = `ExpressExport_${dateVal}_${sendByVal}_Sparepart_${new Date().toISOString().slice(0,10)}.xlsx`;
+            const fileName = `ExpressExport_${dateVal}_${sendByVal}_${new Date().toISOString().slice(0,10)}.xlsx`;
             XLSX.writeFile(wb, fileName);
         }
 
